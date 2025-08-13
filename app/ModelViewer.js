@@ -6,17 +6,18 @@ import { OrbitControls } from "@react-three/drei";
 import { GLTFLoader } from "three-stdlib";
 
 export default function ModelViewer() {
-  const [modelData, setModelData] = useState(null);      // JSON avec chemins des modèles
-  const [colorsData, setColorsData] = useState(null);    // JSON avec couleurs par variante
-  const [baseModel, setBaseModel] = useState(null);      // modèle de base chargé
-  const [models, setModels] = useState({});              // variantes chargées (obj motifs -> liste scènes)
-  const [activeVariants, setActiveVariants] = useState({}); // variantes actives par motif
-  const [openMotifs, setOpenMotifs] = useState({});      // état ouvert/fermé des motifs (accordéon)
-  const [loadingModels, setLoadingModels] = useState(true); // loader pour le modèle complet
+  const [modelData, setModelData] = useState(null);
+  const [colorsData, setColorsData] = useState(null);
+  const [baseModel, setBaseModel] = useState(null);
+  const [models, setModels] = useState({});
+  const [activeVariants, setActiveVariants] = useState({});
+  const [openMotifs, setOpenMotifs] = useState({});
+  const [loadingBase, setLoadingBase] = useState(true);
+  const [loadingVariants, setLoadingVariants] = useState(true);
+  const loader = new GLTFLoader();
 
   useEffect(() => {
     async function loadJSONs() {
-      // Charger les fichiers JSON
       const resModels = await fetch("/models.json");
       const modelsJSON = await resModels.json();
 
@@ -29,54 +30,53 @@ export default function ModelViewer() {
     loadJSONs();
   }, []);
 
+  // Charger d'abord le modèle de base
+  useEffect(() => {
+    if (!modelData) return;
+    async function loadBase() {
+      const base = await loader.loadAsync(modelData.base_model);
+      setBaseModel(base.scene);
+      setLoadingBase(false);
+    }
+    loadBase();
+  }, [modelData]);
+
+  // Charger variantes ensuite en arrière-plan
   useEffect(() => {
     if (!modelData) return;
 
-    const loader = new GLTFLoader();
-
-    async function loadModels() {
-      setLoadingModels(true);
-
-      // Charger modèle de base
-      const base = await loader.loadAsync(modelData.base_model);
-      setBaseModel(base.scene);
-
-      // Charger variantes de tous les motifs
+    async function loadVariants() {
       const loaded = {};
       const actives = {};
 
       for (let i = 1; i <= 7; i++) {
         const motifKey = `motif-${i}`;
         loaded[motifKey] = [];
-
         for (let j = 1; j <= 10; j++) {
-          const path = modelData[motifKey][j - 1] + ".glb"; // ajoute .glb à la fin
+          const path = modelData[motifKey][j - 1] + ".glb";
           const gltf = await loader.loadAsync(path);
           loaded[motifKey].push(gltf.scene);
         }
-
-        // Variante initiale : par exemple, i-1 (motif-1 = variante 0, motif-2 variante 1 ...)
         actives[motifKey] = (i - 1) % 10;
       }
 
       setModels(loaded);
       setActiveVariants(actives);
 
-      // Par défaut, ouvrir tous les motifs (optionnel)
       const openState = {};
-      for (let i = 1; i <= 7; i++) openState[`motif-${i}`] = false; // tous fermés par défaut
+      for (let i = 1; i <= 7; i++) openState[`motif-${i}`] = false;
       setOpenMotifs(openState);
 
-      setLoadingModels(false); // Chargement complet terminé
+      setLoadingVariants(false);
     }
-    loadModels();
+
+    loadVariants();
   }, [modelData]);
 
   function changeVariant(motif, index) {
     setActiveVariants((prev) => ({ ...prev, [motif]: index }));
   }
 
-  // Toggle ouverture/fermeture motif (accordéon)
   function toggleMotif(motif) {
     setOpenMotifs((prev) => ({
       ...prev,
@@ -84,133 +84,119 @@ export default function ModelViewer() {
     }));
   }
 
-  if (!baseModel || !modelData || !colorsData)
-    return (
-      null
-    );
-
   return (
     <div style={{ display: "flex", height: "90vh" }}>
-      <div
-        className="bg-gray-200 w-full"
-        style={{ position: "relative" }}
-      >
-        {/* Loader superposé */}
-        {loadingModels && (
-          <div
-            style={{
-              position: "absolute",
-              inset: 0,
-              backgroundColor: "rgba(0,0,0,0.85)",
-              zIndex: 10,
-              display: "flex",
-              justifyContent: "center",
-              alignItems: "center",
-              color: "#fff",
-              fontSize: 20,
-              fontWeight: "bold",
-            }}
-          >
-            Loading 3D Model ...
+      <div className="bg-neutral-400 w-full" style={{ position: "relative" }}>
+        {loadingBase && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 z-10 text-white">
+            <div className="w-12 h-12 border-4 border-white border-t-transparent rounded-full animate-spin" />
+            <p className="mt-4 text-lg font-semibold">Chargement du modèle...</p>
           </div>
         )}
 
-        <Canvas camera={{ position: [8, 5, 5], fov: 40 }}>
+        <Canvas camera={{ position: [8, 5, 5], fov: 50 }}>
           <ambientLight intensity={4} />
           <directionalLight position={[5, 5, 10]} intensity={6} />
           <OrbitControls />
-
-          {/* Modèle de base */}
-          <primitive object={baseModel} />
-
-          {/* Variantes actives */}
-          {Object.keys(models).map((motif) => {
-            const modelList = models[motif];
-            const activeIndex = activeVariants[motif];
-            if (!modelList || activeIndex === undefined) return null;
-
-            const sceneClone = modelList[activeIndex]?.clone();
-            return sceneClone ? <primitive key={motif} object={sceneClone} /> : null;
-          })}
+          {baseModel && <primitive object={baseModel} />}
+          {!loadingVariants &&
+            Object.keys(models).map((motif) => {
+              const modelList = models[motif];
+              const activeIndex = activeVariants[motif];
+              if (!modelList || activeIndex === undefined) return null;
+              const sceneClone = modelList[activeIndex]?.clone();
+              return sceneClone ? <primitive key={motif} object={sceneClone} /> : null;
+            })}
         </Canvas>
       </div>
 
-      {/* Panneau des variantes avec accordéon */}
+      {/* Panneau latéral */}
       <div
         style={{
           width: 250,
           padding: 10,
           overflowY: "auto",
           borderLeft: "1px solid #ddd",
-          userSelect: "none",
         }}
       >
-        {Object.keys(modelData)
-          .filter((key) => key !== "base_model")
-          .map((motif) => {
-            const activeIndex = activeVariants[motif];
-            const activeColor = colorsData ? colorsData[`variante-${activeIndex + 1}`] : "#999";
+        {loadingVariants ? (
+          <div className="animate-pulse">
+            {Array.from({ length: 7 }).map((_, i) => (
+              <div key={i} className="h-6 bg-gray-300 rounded mb-4"></div>
+            ))}
+          </div>
+        ) : (
+          Object.keys(modelData)
+            .filter((key) => key !== "base_model")
+            .map((motif) => {
+              const activeIndex = activeVariants[motif];
+              const activeColor =
+                colorsData[`variante-${activeIndex + 1}`] || "#999";
 
-            return (
-              <div key={motif} style={{ marginBottom: 20 }}>
-                <h3
-                  onClick={() => toggleMotif(motif)}
-                  style={{
-                    cursor: "pointer",
-                    marginBottom: 8,
-                    backgroundColor: "#eee",
-                    padding: "6px 10px",
-                    borderRadius: 4,
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                  }}
-                >
-                  {/* Cercle couleur active */}
-                  <div
+              return (
+                <div key={motif} style={{ marginBottom: 20 }}>
+                  <h3
+                    onClick={() => toggleMotif(motif)}
                     style={{
-                      width: 16,
-                      height: 16,
-                      borderRadius: "50%",
-                      backgroundColor: activeColor,
-                      marginRight: 8,
-                      border: "1px solid #444",
-                      flexShrink: 0,
+                      cursor: "pointer",
+                      marginBottom: 8,
+                      backgroundColor: "#eee",
+                      padding: "6px 10px",
+                      borderRadius: 4,
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
                     }}
-                  />
-                  {motif.toUpperCase()}
-                  <span style={{ fontSize: 14 }}>{openMotifs[motif] ? "▲" : "▼"}</span>
-                </h3>
+                  >
+                    <div
+                      style={{
+                        width: 16,
+                        height: 16,
+                        borderRadius: "50%",
+                        backgroundColor: activeColor,
+                        marginRight: 8,
+                        border: "1px solid #444",
+                        flexShrink: 0,
+                      }}
+                    />
+                    {motif.toUpperCase()}
+                    <span style={{ fontSize: 14 }}>
+                      {openMotifs[motif] ? "▲" : "▼"}
+                    </span>
+                  </h3>
 
-                {/* Variantes - affichées seulement si ouvert */}
-                {openMotifs[motif] && (
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                    {modelData[motif].map((_, idx) => {
-                      const color = colorsData[`variante-${idx + 1}`] || "#999";
-                      const isActive = activeVariants[motif] === idx;
-                      return (
-                        <div
-                          key={idx}
-                          onClick={() => changeVariant(motif, idx)}
-                          title={`Variante ${idx + 1}`}
-                          style={{
-                            width: 24,
-                            height: 24,
-                            borderRadius: "50%",
-                            backgroundColor: color,
-                            border: isActive ? "3px solid #000" : "1px solid #ccc",
-                            cursor: "pointer",
-                            boxSizing: "border-box",
-                            transition: "border-color 0.3s",
-                          }}
-                        />
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            );
-          })}
+                  {openMotifs[motif] && (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                      {modelData[motif].map((_, idx) => {
+                        const color =
+                          colorsData[`variante-${idx + 1}`] || "#999";
+                        const isActive = activeVariants[motif] === idx;
+                        return (
+                          <div
+                            key={idx}
+                            onClick={() => changeVariant(motif, idx)}
+                            title={`Variante ${idx + 1}`}
+                            style={{
+                              width: 24,
+                              height: 24,
+                              borderRadius: "50%",
+                              backgroundColor: color,
+                              border: isActive
+                                ? "3px solid #000"
+                                : "1px solid #ccc",
+                              cursor: "pointer",
+                              boxSizing: "border-box",
+                              transition: "border-color 0.3s",
+                            }}
+                          />
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })
+        )}
       </div>
     </div>
   );
